@@ -33,11 +33,16 @@ spring:
   jpa:
     hibernate:
       ddl-auto: create
+    defer-datasource-initialization: true
     properties:
       hibernate:
         dialect: org.hibernate.dialect.MySQLDialect
         format_sql: true
     show-sql: false
+
+  sql:
+    init:
+      mode: always
 
   jackson:
     serialization:
