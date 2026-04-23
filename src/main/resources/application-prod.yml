@@ -10,7 +10,7 @@ spring:
       region:
         static: ap-northeast-2
       s3:
-        bucket: hot6-novelcraft-eunsik
+        bucket: hot6-novelcraft-chat
       stack:
         auto: false
 
