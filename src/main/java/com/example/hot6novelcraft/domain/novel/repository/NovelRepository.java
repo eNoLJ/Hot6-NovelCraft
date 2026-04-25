@@ -26,4 +26,15 @@ public interface NovelRepository extends JpaRepository<Novel, Long>, CustomNovel
 
     // V2: soft-delete 조건 포함 조회 — findById 대신 사용
     Optional<Novel> findByIdAndIsDeletedFalse(Long id);
+
+    // 찜 +
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Novel n SET n.bookmarkCount = n.bookmarkCount + 1 WHERE n.id = :novelId")
+    void incrementBookmarkCount(@Param("novelId") Long novelId);
+
+    // 찜 -
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE Novel n SET n.bookmarkCount = n.bookmarkCount - 1 WHERE n.id = :novelId AND n.bookmarkCount > 0")
+    void decrementBookmarkCount(@Param("novelId") Long novelId);
+
 }
