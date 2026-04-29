@@ -61,17 +61,20 @@ public class WithdrawalService {
     public WithdrawalResponse createWithdrawal(Long authorId, WithdrawalCreateRequest request) {
         String lockKey = WITHDRAWAL_LOCK_PREFIX + authorId;
         String lockValue = java.util.UUID.randomUUID().toString();
+
+        // 락 획득 시도
         Boolean acquired = redisTemplate.opsForValue()
                 .setIfAbsent(lockKey, lockValue, LOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
         if (Boolean.FALSE.equals(acquired)) {
+            // 대기 중인 환전 건이 있다는 예외 코드 반환
             throw new ServiceErrorException(ExchangeExceptionEnum.WITHDRAWAL_PENDING_EXISTS);
         }
 
         try {
             return processWithdrawal(authorId, request);
         } finally {
-            // 내가 잡은 락인 경우에만 삭제
+            //[개선] 락 해제 시 현재 벨류를 확인하여 타인이 획득한 락을 지우지 않도록 보호
             Object currentValue = redisTemplate.opsForValue().get(lockKey);
             if (lockValue.equals(currentValue)) {
                 redisTemplate.delete(lockKey);

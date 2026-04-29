@@ -70,10 +70,14 @@ public class LocalBankVerificationClient implements BankVerificationClient {
     @Override
     public boolean isBankMaintenanceTime() {
         LocalTime now = LocalTime.now();
-        boolean isMaintenance = now.isAfter(LocalTime.of(23, 30)) || now.isBefore(LocalTime.of(0, 30));
+        LocalTime start = LocalTime.of(23, 30);
+        LocalTime end = LocalTime.of(0, 30);
+
+        // [개선] !now.isBefore(start) 는 23:30:00을 포함 (이상/이하 처리)
+        boolean isMaintenance = !now.isBefore(start) || !now.isAfter(end);
 
         if (isMaintenance) {
-            log.info("[Local] 은행 점검시간");
+            log.info("[Local] 은행 점검시간 - 현재시간: {}", now);
         }
 
         return isMaintenance;

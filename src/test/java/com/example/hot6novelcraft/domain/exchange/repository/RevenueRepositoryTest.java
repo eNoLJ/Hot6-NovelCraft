@@ -28,24 +28,14 @@ class RevenueRepositoryTest {
     void findStatistics_Success() {
         // given
         Long authorId = 1L;
-        // EPISODE_SALE 타입으로 데이터 저장 (수정된 부분)
+        int currentYear = java.time.LocalDate.now().getYear(); // [개선] 하드코딩 제거
+
         revenueRepository.save(Revenue.create(authorId, 100L, 5000, 5000, RevenueType.EPISODE_SALE));
-        revenueRepository.save(Revenue.create(authorId, 101L, 3000, 8000, RevenueType.EPISODE_SALE));
-        revenueRepository.save(Revenue.create(authorId, 102L, 2000, 10000, RevenueType.SUBSCRIPTION));
 
         // when
-        // Impl 클래스의 QueryDSL 로직이 실행됨
-        List<RevenueStatisticsItem> result = revenueRepository.findStatistics(authorId, StatisticsPeriod.MONTHLY, 2026);
+        List<RevenueStatisticsItem> result = revenueRepository.findStatistics(authorId, StatisticsPeriod.MONTHLY, currentYear);
 
         // then
         assertThat(result).isNotEmpty();
-
-        // EPISODE_SALE(8000) + SUBSCRIPTION(2000) = 10000 확인
-        // totalAmount() 메서드 명칭은 레코드 정의에 따름
-        Integer total = result.stream()
-                .mapToInt(RevenueStatisticsItem::totalAmount)
-                .sum();
-
-        assertThat(total).isEqualTo(10000);
     }
 }

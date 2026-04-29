@@ -142,18 +142,20 @@ class WithdrawalServiceTest {
         }
 
         @Test
-        @DisplayName("실패 - 잔액 부족")
+        @DisplayName("실패 - 잔액 부족 시 정확한 에러 코드 반환")
         void failInsufficientBalance() {
+            // given
             given(redisTemplate.opsForValue()).willReturn(valueOperations);
             given(valueOperations.setIfAbsent(anyString(), anyString(), anyLong(), any(TimeUnit.class))).willReturn(true);
-            given(valueOperations.get(anyString())).willReturn(null);
-            given(bankAccountRepository.findByUserIdAndIsVerifiedTrue(AUTHOR_ID))
-                    .willReturn(Optional.of(createVerifiedAccount()));
-            given(withdrawalRepository.existsByAuthorIdAndStatus(AUTHOR_ID, WithdrawalStatus.PENDING)).willReturn(false);
-            given(revenueRepository.sumAmountByAuthorIdAndTypeIn(eq(AUTHOR_ID), any())).willReturn(30000);
-            given(revenueRepository.sumAmountByAuthorIdAndType(AUTHOR_ID, RevenueType.WITHDRAWAL)).willReturn(25000);
-            assertThatThrownBy(() -> withdrawalService.createWithdrawal(AUTHOR_ID, new WithdrawalCreateRequest(50000)))
-                    .isInstanceOf(ServiceErrorException.class);
+            given(bankAccountRepository.findByUserIdAndIsVerifiedTrue(AUTHOR_ID)).willReturn(Optional.of(createVerifiedAccount()));
+            given(revenueRepository.sumAmountByAuthorIdAndTypeIn(eq(AUTHOR_ID), any())).willReturn(10000); // 1만 원 있음
+            given(revenueRepository.sumAmountByAuthorIdAndType(AUTHOR_ID, RevenueType.WITHDRAWAL)).willReturn(0);
+
+            // when & then
+            assertThatThrownBy(() -> withdrawalService.createWithdrawal(AUTHOR_ID, new WithdrawalCreateRequest(50000))) // 5만 원 신청
+                    .isInstanceOf(ServiceErrorException.class)
+                    // [개선] 에러 코드 필드까지 검증
+                    .hasFieldOrPropertyWithValue("errorCode", com.example.hot6novelcraft.domain.exchange.exception.ExchangeExceptionEnum.WITHDRAWAL_INSUFFICIENT_BALANCE);
         }
     }
 
