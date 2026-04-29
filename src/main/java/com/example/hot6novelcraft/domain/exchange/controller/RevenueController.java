@@ -42,10 +42,11 @@ public class RevenueController {
     public ResponseEntity<BaseResponse<RevenueStatisticsResponse>> getStatistics(
             @AuthenticationPrincipal UserDetailsImpl userDetails,
             @RequestParam(defaultValue = "MONTHLY") StatisticsPeriod period,
-            @RequestParam(defaultValue = "2026") Integer year
+            @RequestParam(required = false) Integer year
     ) {
         Long userId = userDetails.getUser().getId();
-        RevenueStatisticsResponse response = statisticsService.getStatistics(userId, period, year);
+        int resolvedYear = (year != null) ? year : java.time.Year.now().getValue();
+        RevenueStatisticsResponse response = statisticsService.getStatistics(userId, period, resolvedYear);
         return ResponseEntity.ok(BaseResponse.success("OK", "수익 통계를 조회했습니다", response));
     }
 }

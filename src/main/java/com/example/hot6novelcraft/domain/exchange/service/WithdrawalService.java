@@ -44,6 +44,7 @@ public class WithdrawalService {
     private final AesEncryptionUtil aesEncryptionUtil;
     private final RedisTemplate<String, Object> redisTemplate;
     private final RevenueService revenueService;
+    private final StatisticsService statisticsService;
 
     /**
      * 환전 신청
@@ -59,8 +60,9 @@ public class WithdrawalService {
     @Transactional
     public WithdrawalResponse createWithdrawal(Long authorId, WithdrawalCreateRequest request) {
         String lockKey = WITHDRAWAL_LOCK_PREFIX + authorId;
+        String lockValue = java.util.UUID.randomUUID().toString();
         Boolean acquired = redisTemplate.opsForValue()
-                .setIfAbsent(lockKey, "LOCKED", LOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+                .setIfAbsent(lockKey, lockValue, LOCK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
         if (Boolean.FALSE.equals(acquired)) {
             throw new ServiceErrorException(ExchangeExceptionEnum.WITHDRAWAL_PENDING_EXISTS);
@@ -69,7 +71,11 @@ public class WithdrawalService {
         try {
             return processWithdrawal(authorId, request);
         } finally {
-            redisTemplate.delete(lockKey);
+            // 내가 잡은 락인 경우에만 삭제
+            Object currentValue = redisTemplate.opsForValue().get(lockKey);
+            if (lockValue.equals(currentValue)) {
+                redisTemplate.delete(lockKey);
+            }
         }
     }
 
@@ -89,9 +95,9 @@ public class WithdrawalService {
             throw new ServiceErrorException(ExchangeExceptionEnum.WITHDRAWAL_BELOW_MINIMUM);
         }
 
-        // 잔액 검증
+        // 잔액 검증 (수익 + 환불 - 환전)
         Integer totalEarned = revenueRepository.sumAmountByAuthorIdAndTypeIn(
-                authorId, List.of(RevenueType.EPISODE_SALE, RevenueType.SUBSCRIPTION)
+                authorId, List.of(RevenueType.EPISODE_SALE, RevenueType.SUBSCRIPTION, RevenueType.REFUND)
         );
         Integer totalWithdrawn = revenueRepository.sumAmountByAuthorIdAndType(
                 authorId, RevenueType.WITHDRAWAL
@@ -114,8 +120,9 @@ public class WithdrawalService {
         Withdrawal withdrawal = Withdrawal.request(authorId, bankAccount.getId(), request.requestAmount(), fee);
         withdrawalRepository.save(withdrawal);
 
-        // 캐시 무효화
+        // 캐시 무효화 (수익 현황 + 통계)
         revenueService.evictRevenueOverviewCache(authorId);
+        statisticsService.evictStatisticsCache(authorId);
 
         log.info("환전 신청 완료 - authorId: {}, 금액: {}, 수수료: {}, 실수령: {}",
                 authorId, request.requestAmount(), fee, withdrawal.getActualAmount());
@@ -185,12 +192,11 @@ public class WithdrawalService {
 
         withdrawal.complete();
 
-        // TODO: 실제 은행 API를 통한 송금 처리
-        log.info("환전 승인 완료 - withdrawalId: {}, authorId: {}, 실수령액: {}",
-                withdrawalId, withdrawal.getAuthorId(), withdrawal.getActualAmount());
+        log.info("환전 승인 완료 - withdrawalId: {}, authorId: {}", withdrawalId, withdrawal.getAuthorId());
 
-        // 캐시 무효화
+        // 캐시 무효화 (수익 현황 + 통계)
         revenueService.evictRevenueOverviewCache(withdrawal.getAuthorId());
+        statisticsService.evictStatisticsCache(withdrawal.getAuthorId());
 
         return WithdrawalResponse.from(withdrawal);
     }
@@ -198,7 +204,7 @@ public class WithdrawalService {
     /**
      * [관리자] 환전 거절
      * - PENDING → REJECTED 상태 변경 + 거절 사유 기록
-     * - 차감된 잔액 복구 (Revenue 복구 건 생성)
+     * - 차감된 잔액 복구 (Revenue REFUND 건 생성 — WITHDRAWAL 합산에서 제외됨)
      */
     @Transactional
     public WithdrawalResponse rejectWithdrawal(Long withdrawalId, String rejectedReason) {
@@ -207,7 +213,7 @@ public class WithdrawalService {
 
         withdrawal.reject(rejectedReason);
 
-        // 잔액 복구: 차감했던 금액만큼 다시 돌려주는 Revenue 생성
+        // 잔액 복구: REFUND 타입으로 기록 (WITHDRAWAL 합산에서 차감되지 않음)
         Integer totalEarned = revenueRepository.sumAmountByAuthorIdAndTypeIn(
                 withdrawal.getAuthorId(), List.of(RevenueType.EPISODE_SALE, RevenueType.SUBSCRIPTION)
         );
@@ -222,15 +228,15 @@ public class WithdrawalService {
                 null,
                 withdrawal.getRequestAmount(),
                 restoredBalance,
-                RevenueType.WITHDRAWAL  // 음의 차감 복구 (잔액이 증가하는 방향)
+                RevenueType.REFUND
         );
         revenueRepository.save(refundRevenue);
 
-        log.info("환전 거절 완료 - withdrawalId: {}, authorId: {}, 복구금액: {}, 사유: {}",
-                withdrawalId, withdrawal.getAuthorId(), withdrawal.getRequestAmount(), rejectedReason);
+        log.info("환전 거절 완료 - withdrawalId: {}, authorId: {}", withdrawalId, withdrawal.getAuthorId());
 
-        // 캐시 무효화
+        // 캐시 무효화 (수익 현황 + 통계)
         revenueService.evictRevenueOverviewCache(withdrawal.getAuthorId());
+        statisticsService.evictStatisticsCache(withdrawal.getAuthorId());
 
         return WithdrawalResponse.from(withdrawal);
     }

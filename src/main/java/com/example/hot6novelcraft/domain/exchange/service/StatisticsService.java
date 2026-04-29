@@ -63,12 +63,14 @@ public class StatisticsService {
      * - 수익 발생/환전 시 호출
      */
     public void evictStatisticsCache(Long authorId) {
-        // 패턴 기반 삭제 (월별 + 주별 모두)
         String pattern = STATISTICS_KEY_PREFIX + authorId + ":*";
-        var keys = redisTemplate.keys(pattern);
-        if (keys != null && !keys.isEmpty()) {
-            redisTemplate.delete(keys);
-            log.debug("통계 캐시 무효화 - authorId: {}, 삭제 건수: {}", authorId, keys.size());
+        try (var cursor = redisTemplate.scan(org.springframework.data.redis.core.ScanOptions.scanOptions()
+                .match(pattern).count(100).build())) {
+            var keys = cursor.stream().collect(java.util.stream.Collectors.toSet());
+            if (!keys.isEmpty()) {
+                redisTemplate.delete(keys);
+                log.debug("통계 캐시 무효화 - authorId: {}, 삭제 건수: {}", authorId, keys.size());
+            }
         }
     }
 }

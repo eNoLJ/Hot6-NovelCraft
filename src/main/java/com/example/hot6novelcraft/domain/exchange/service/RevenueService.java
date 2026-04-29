@@ -46,9 +46,9 @@ public class RevenueService {
             return cached;
         }
 
-        // 총 누적 수익 (회차 판매 + 구독)
+        // 총 누적 수익 (회차 판매 + 구독 + 환불)
         Integer totalEarned = revenueRepository.sumAmountByAuthorIdAndTypeIn(
-                authorId, List.of(RevenueType.EPISODE_SALE, RevenueType.SUBSCRIPTION)
+                authorId, List.of(RevenueType.EPISODE_SALE, RevenueType.SUBSCRIPTION, RevenueType.REFUND)
         );
 
         // 총 환전 금액
