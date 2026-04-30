@@ -13,7 +13,7 @@ import com.example.hot6novelcraft.domain.episode.entity.Episode;
 import com.example.hot6novelcraft.domain.episode.entity.enums.EpisodeStatus;
 import com.example.hot6novelcraft.domain.episode.repository.EpisodeRepository;
 import com.example.hot6novelcraft.domain.notification.dto.event.NotificationEvent;
-import com.example.hot6novelcraft.domain.notification.producer.NotificationProducer;
+import org.springframework.context.ApplicationEventPublisher;
 import com.example.hot6novelcraft.domain.novel.entity.Novel;
 import com.example.hot6novelcraft.domain.novel.entity.enums.MainTag;
 import com.example.hot6novelcraft.domain.novel.entity.enums.NovelStatus;
@@ -47,7 +47,7 @@ public class EpisodeService {
     private final EpisodeCacheService episodeCacheService;
     private final UserRepository userRepository;
     private final AuthorFollowRepository authorFollowRepository;
-    private final NotificationProducer notificationProducer;
+    private final ApplicationEventPublisher eventPublisher;
 
     // 회차 생성
     @Transactional
@@ -181,7 +181,7 @@ public class EpisodeService {
 
         String authorNickname = userRepository.findById(novel.getAuthorId()).map(u -> u.getNickname()).orElse("작가");
         authorFollowRepository.findFollowerIdsByFollowingId(novel.getAuthorId())
-                .forEach(followerId -> notificationProducer.publish(
+                .forEach(followerId -> eventPublisher.publishEvent(
                         NotificationEvent.episodePublished(followerId, authorNickname, novel.getTitle(), episode.getId())));
 
         return EpisodePublishResponse.from(episode.getId());

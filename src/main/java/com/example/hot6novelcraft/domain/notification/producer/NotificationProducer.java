@@ -18,13 +18,18 @@ public class NotificationProducer {
     private String topic;
 
     public void publish(NotificationEvent event) {
-        notificationKafkaTemplate.send(topic, String.valueOf(event.userId()), event)
-                .whenComplete((result, ex) -> {
-                    if (ex != null) {
-                        log.error("[Kafka] 알림 발행 실패 userId={} type={}", event.userId(), event.type(), ex);
-                    } else {
-                        log.debug("[Kafka] 알림 발행 성공 userId={} type={}", event.userId(), event.type());
-                    }
-                });
+        try {
+            notificationKafkaTemplate.send(topic, String.valueOf(event.userId()), event)
+                    .whenComplete((result, ex) -> {
+                        if (ex != null) {
+                            log.error("[Kafka] 알림 발행 실패 userId={} type={}", event.userId(), event.type(), ex);
+                        } else {
+                            log.debug("[Kafka] 알림 발행 성공 userId={} type={} partition={}",
+                                    event.userId(), event.type(), result.getRecordMetadata().partition());
+                        }
+                    });
+        } catch (Exception e) {
+            log.error("[Kafka] 알림 발행 요청 실패 userId={} type={}", event.userId(), event.type(), e);
+        }
     }
 }
