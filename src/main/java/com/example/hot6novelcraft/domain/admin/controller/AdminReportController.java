@@ -2,19 +2,22 @@ package com.example.hot6novelcraft.domain.admin.controller;
 
 import com.example.hot6novelcraft.common.dto.BaseResponse;
 import com.example.hot6novelcraft.common.dto.PageResponse;
+import com.example.hot6novelcraft.domain.admin.dto.request.AdminReportProcessRequest;
 import com.example.hot6novelcraft.domain.admin.dto.response.AdminReportListResponse;
+import com.example.hot6novelcraft.domain.admin.dto.response.AdminReportProcessResponse;
 import com.example.hot6novelcraft.domain.admin.service.AdminReportService;
 import com.example.hot6novelcraft.domain.report.entity.enums.ReportStatus;
 import com.example.hot6novelcraft.domain.report.entity.enums.ReportTargetType;
+import com.example.hot6novelcraft.domain.user.entity.UserDetailsImpl;
+import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/admin/reports")
@@ -41,5 +44,24 @@ public class AdminReportController {
         return ResponseEntity.ok(
                 BaseResponse.success("200", "신고 목록 조회 성공", response)
         );
+    }
+
+    /**
+     * 신고 처리
+     * 정은식
+     */
+    @PreAuthorize("hasAnyAuthority('ADMIN', 'SUPER_ADMIN')")
+    @PatchMapping("/{reportId}")
+    public ResponseEntity<BaseResponse<AdminReportProcessResponse>> processReport(
+            @PathVariable Long reportId,
+            @Valid @RequestBody AdminReportProcessRequest request,
+            @AuthenticationPrincipal UserDetailsImpl userDetails
+    ) {
+        AdminReportProcessResponse response =
+                adminReportService.processReport(reportId, request, userDetails);
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(BaseResponse.success("201", "신고 처리가 완료되었습니다.", response));
     }
 }
