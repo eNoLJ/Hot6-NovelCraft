@@ -10,7 +10,12 @@ import lombok.NoArgsConstructor;
 
 @Getter
 @Entity
-@Table(name = "report_management")
+@Table(
+        name = "report_management",
+        uniqueConstraints = {
+                @UniqueConstraint(name = "uk_report_management_report_id", columnNames = "report_id")
+        }
+)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class ReportManagement extends BaseEntity {
 

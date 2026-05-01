@@ -10,18 +10,20 @@ import com.example.hot6novelcraft.domain.report.entity.enums.ReportStatus;
 import com.example.hot6novelcraft.domain.report.entity.enums.ReportTargetType;
 import com.example.hot6novelcraft.domain.user.entity.UserDetailsImpl;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/admin/reports")
 @RequiredArgsConstructor
+@Validated
 public class AdminReportController {
 
     private final AdminReportService adminReportService;
@@ -35,7 +37,7 @@ public class AdminReportController {
     public ResponseEntity<BaseResponse<PageResponse<AdminReportListResponse>>> getReportList(
             @RequestParam(required = false) ReportStatus status,
             @RequestParam(required = false) ReportTargetType targetType,
-            @RequestParam(defaultValue = "0") int page
+            @RequestParam(defaultValue = "0") @Min(0) int page
     ) {
         Pageable pageable = PageRequest.of(page, 20);
         PageResponse<AdminReportListResponse> response =
@@ -60,8 +62,8 @@ public class AdminReportController {
         AdminReportProcessResponse response =
                 adminReportService.processReport(reportId, request, userDetails);
 
-        return ResponseEntity
-                .status(HttpStatus.CREATED)
-                .body(BaseResponse.success("201", "신고 처리가 완료되었습니다.", response));
+        return ResponseEntity.ok(
+                BaseResponse.success("200", "신고 처리가 완료되었습니다.", response)
+        );
     }
 }
