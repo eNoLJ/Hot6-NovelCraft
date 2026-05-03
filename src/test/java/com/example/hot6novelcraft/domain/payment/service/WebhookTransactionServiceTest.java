@@ -384,8 +384,8 @@ class WebhookTransactionServiceTest {
         }
 
         @Test
-        @DisplayName("방어 코드 - Payment가 PENDING이 아니면 보정 스킵 + Event만 COMPLETE")
-        void completePendingPayment_notPending_skipsCompensation() {
+        @DisplayName("방어 코드 - 이미 COMPLETED 상태이면 보정 스킵 + Event만 COMPLETE")
+        void completePendingPayment_alreadyCompleted_skipsCompensation() {
             // given
             Payment payment = createMockPayment(PAYMENT_ID, USER_ID, PaymentStatus.COMPLETED);
             WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID, WebhookEventStatus.PENDING);
@@ -400,6 +400,47 @@ class WebhookTransactionServiceTest {
             verify(payment, never()).complete(any());
             verify(pointService, never()).charge(anyLong(), anyLong());
             verify(purchaseRepository, never()).save(any());
+            verify(event, times(1)).complete();
+        }
+
+        @Test
+        @DisplayName("성공 - FAILED Payment도 COMPLETED로 보정 (confirm 타임아웃 케이스)")
+        void completePendingPayment_failedPayment_completesSuccessfully() {
+            // given
+            Payment payment = createMockPayment(PAYMENT_ID, USER_ID, PaymentStatus.FAILED);
+            WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID, WebhookEventStatus.PENDING);
+            Purchase mockPurchase = mock(Purchase.class);
+
+            given(paymentRepository.findById(PAYMENT_ID)).willReturn(Optional.of(payment));
+            given(webhookEventRepository.findById(WEBHOOK_EVENT_ID)).willReturn(Optional.of(event));
+            given(purchaseRepository.save(any(Purchase.class))).willReturn(mockPurchase);
+
+            // when
+            transactionService.completePendingPayment(WEBHOOK_EVENT_ID, PAYMENT_ID, PaymentMethod.CARD);
+
+            // then
+            verify(payment, times(1)).complete(PaymentMethod.CARD);
+            verify(pointService, times(1)).charge(USER_ID, AMOUNT);
+            verify(purchaseRepository, times(1)).save(any(Purchase.class));
+            verify(event, times(1)).complete();
+        }
+
+        @Test
+        @DisplayName("방어 코드 - REFUNDED 상태는 보정 불가, Event만 COMPLETE")
+        void completePendingPayment_refundedPayment_skipsCompensation() {
+            // given
+            Payment payment = createMockPayment(PAYMENT_ID, USER_ID, PaymentStatus.REFUNDED);
+            WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID, WebhookEventStatus.PENDING);
+
+            given(paymentRepository.findById(PAYMENT_ID)).willReturn(Optional.of(payment));
+            given(webhookEventRepository.findById(WEBHOOK_EVENT_ID)).willReturn(Optional.of(event));
+
+            // when
+            transactionService.completePendingPayment(WEBHOOK_EVENT_ID, PAYMENT_ID, PaymentMethod.CARD);
+
+            // then
+            verify(payment, never()).complete(any());
+            verify(pointService, never()).charge(anyLong(), anyLong());
             verify(event, times(1)).complete();
         }
 
@@ -469,6 +510,108 @@ class WebhookTransactionServiceTest {
             verify(payment, times(1)).complete(PaymentMethod.CARD);
             verify(pointService, times(1)).charge(USER_ID, AMOUNT);
             verify(purchaseRepository, times(1)).save(any(Purchase.class));
+        }
+    }
+
+    // =========================================================
+    // finalizeRefundFromWebhook() - 환불 타임아웃 보정
+    // =========================================================
+    @Nested
+    @DisplayName("finalizeRefundFromWebhook() - 환불 타임아웃 보정")
+    class FinalizeRefundFromWebhookTest {
+
+        @Test
+        @DisplayName("성공 - COMPLETED → REFUNDED 전환 + 포인트 차감 (compensateDeduct 실행된 케이스)")
+        void finalizeRefundFromWebhook_pointsAvailable_deductsAndRefunds() {
+            // given
+            Payment payment = createMockPayment(PAYMENT_ID, USER_ID, PaymentStatus.COMPLETED);
+            WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID, WebhookEventStatus.PENDING);
+
+            given(paymentRepository.findById(PAYMENT_ID)).willReturn(Optional.of(payment));
+            given(webhookEventRepository.findById(WEBHOOK_EVENT_ID)).willReturn(Optional.of(event));
+            // pointService.deduct() 성공 (잔액 충분)
+
+            // when
+            transactionService.finalizeRefundFromWebhook(WEBHOOK_EVENT_ID, PAYMENT_ID);
+
+            // then
+            verify(pointService, times(1)).deduct(USER_ID, AMOUNT);
+            verify(payment, times(1)).cancel();
+            verify(event, times(1)).complete();
+        }
+
+        @Test
+        @DisplayName("성공 - COMPLETED → REFUNDED 전환, 포인트 잔액 부족 시 차감 스킵 (compensateDeduct 미실행 케이스)")
+        void finalizeRefundFromWebhook_pointsAlreadyDeducted_skipsDeductAndRefunds() {
+            // given
+            Payment payment = createMockPayment(PAYMENT_ID, USER_ID, PaymentStatus.COMPLETED);
+            WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID, WebhookEventStatus.PENDING);
+
+            given(paymentRepository.findById(PAYMENT_ID)).willReturn(Optional.of(payment));
+            given(webhookEventRepository.findById(WEBHOOK_EVENT_ID)).willReturn(Optional.of(event));
+            doThrow(new ServiceErrorException(PaymentExceptionEnum.ERR_INSUFFICIENT_POINT))
+                    .when(pointService).deduct(USER_ID, AMOUNT);
+
+            // when
+            transactionService.finalizeRefundFromWebhook(WEBHOOK_EVENT_ID, PAYMENT_ID);
+
+            // then - 포인트 차감 실패해도 REFUNDED 전환은 수행
+            verify(pointService, times(1)).deduct(USER_ID, AMOUNT);
+            verify(payment, times(1)).cancel();
+            verify(event, times(1)).complete();
+        }
+
+        @Test
+        @DisplayName("방어 코드 - COMPLETED가 아닌 상태면 보정 스킵 + Event COMPLETE")
+        void finalizeRefundFromWebhook_notCompleted_skips() {
+            // given
+            Payment payment = createMockPayment(PAYMENT_ID, USER_ID, PaymentStatus.REFUNDED);
+            WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID, WebhookEventStatus.PENDING);
+
+            given(paymentRepository.findById(PAYMENT_ID)).willReturn(Optional.of(payment));
+            given(webhookEventRepository.findById(WEBHOOK_EVENT_ID)).willReturn(Optional.of(event));
+
+            // when
+            transactionService.finalizeRefundFromWebhook(WEBHOOK_EVENT_ID, PAYMENT_ID);
+
+            // then
+            verify(pointService, never()).deduct(anyLong(), anyLong());
+            verify(payment, never()).cancel();
+            verify(event, times(1)).complete();
+        }
+
+        @Test
+        @DisplayName("실패 - Payment 없을 시 ERR_PAYMENT_NOT_FOUND")
+        void finalizeRefundFromWebhook_paymentNotFound_throwsException() {
+            // given
+            given(paymentRepository.findById(PAYMENT_ID)).willReturn(Optional.empty());
+
+            // when & then
+            assertThatThrownBy(() -> transactionService.finalizeRefundFromWebhook(WEBHOOK_EVENT_ID, PAYMENT_ID))
+                    .isInstanceOf(ServiceErrorException.class)
+                    .hasMessage(PaymentExceptionEnum.ERR_PAYMENT_NOT_FOUND.getMessage());
+
+            verify(pointService, never()).deduct(anyLong(), anyLong());
+        }
+
+        @Test
+        @DisplayName("검증 - 실행 순서: deduct() → cancel() → event.complete()")
+        void finalizeRefundFromWebhook_executionOrder() {
+            // given
+            Payment payment = createMockPayment(PAYMENT_ID, USER_ID, PaymentStatus.COMPLETED);
+            WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID, WebhookEventStatus.PENDING);
+
+            given(paymentRepository.findById(PAYMENT_ID)).willReturn(Optional.of(payment));
+            given(webhookEventRepository.findById(WEBHOOK_EVENT_ID)).willReturn(Optional.of(event));
+
+            // when
+            transactionService.finalizeRefundFromWebhook(WEBHOOK_EVENT_ID, PAYMENT_ID);
+
+            // then
+            var inOrder = inOrder(pointService, payment, event);
+            inOrder.verify(pointService).deduct(USER_ID, AMOUNT);
+            inOrder.verify(payment).cancel();
+            inOrder.verify(event).complete();
         }
     }
 }

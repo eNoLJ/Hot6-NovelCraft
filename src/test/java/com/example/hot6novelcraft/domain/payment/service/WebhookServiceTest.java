@@ -290,8 +290,8 @@ class WebhookServiceTest {
     }
 
     @Nested
-    @DisplayName("handleWebhook() - Payment 최종 상태 케이스")
-    class HandleWebhookTerminalStatusTest {
+    @DisplayName("handleWebhook() - Transaction.Paid 최종 상태 케이스")
+    class HandleWebhookPaidTerminalStatusTest {
 
         @Test
         @DisplayName("Payment COMPLETED - 이미 처리 완료, WebhookEvent COMPLETE 처리")
@@ -319,7 +319,7 @@ class WebhookServiceTest {
 
         @Test
         @DisplayName("Payment REFUNDED - 이미 환불 완료, WebhookEvent COMPLETE 처리")
-        void handleWebhook_paymentRefunded_marksEventComplete() throws Exception {
+        void handleWebhook_paymentRefunded_paidWebhook_marksEventComplete() throws Exception {
             // given
             WebhookRequest request = createWebhookRequest("Transaction.Paid", PAYMENT_KEY, TRANSACTION_ID, null);
             WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID);
@@ -338,11 +338,12 @@ class WebhookServiceTest {
 
             // then
             verify(webhookTransactionService, times(1)).markEventComplete(WEBHOOK_EVENT_ID);
+            verify(webhookTransactionService, never()).completePendingPayment(anyLong(), anyLong(), any());
         }
 
         @Test
-        @DisplayName("Payment FAILED - 이미 실패 처리, WebhookEvent COMPLETE 처리")
-        void handleWebhook_paymentFailed_marksEventComplete() throws Exception {
+        @DisplayName("Payment FAILED - Transaction.Failed 웹훅, 이미 처리됨 WebhookEvent COMPLETE")
+        void handleWebhook_paymentFailed_failedWebhook_marksEventComplete() throws Exception {
             // given
             WebhookRequest request = createWebhookRequest("Transaction.Failed", PAYMENT_KEY, TRANSACTION_ID, null);
             WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID);
@@ -361,6 +362,165 @@ class WebhookServiceTest {
 
             // then
             verify(webhookTransactionService, times(1)).markEventComplete(WEBHOOK_EVENT_ID);
+            verify(webhookTransactionService, never()).failPendingPayment(anyLong(), anyLong());
+        }
+    }
+
+    @Nested
+    @DisplayName("handleWebhook() - confirm 타임아웃 FAILED 결제 보정 (Transaction.Paid)")
+    class HandleWebhookFailedPaymentRecoveryTest {
+
+        @Test
+        @DisplayName("성공 - FAILED Payment를 PaidPayment로 보정 (confirm 타임아웃 케이스)")
+        void handleWebhook_failedPayment_paidWebhook_completesPayment() throws Exception {
+            // given
+            WebhookRequest request = createWebhookRequest("Transaction.Paid", PAYMENT_KEY, TRANSACTION_ID, null);
+            WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID);
+            Payment payment = createMockPayment(PAYMENT_ID, PaymentStatus.FAILED);
+            PaidPayment paidPayment = mock(PaidPayment.class);
+            given(paidPayment.getMethod()).willReturn(mock(io.portone.sdk.server.payment.PaymentMethod.class));
+
+            given(objectMapper.writeValueAsString(any())).willReturn("{\"type\":\"Transaction.Paid\"}");
+            given(webhookTransactionService.prepareWebhookEvent(anyString(), any(), anyString(), anyString()))
+                    .willReturn(event);
+            given(paymentClient.getPayment(PAYMENT_KEY))
+                    .willReturn(CompletableFuture.completedFuture(paidPayment));
+            given(webhookTransactionService.getPaymentByKey(PAYMENT_KEY)).willReturn(payment);
+            given(redisUtil.acquireLock(anyString())).willReturn(true);
+
+            // when
+            webhookService.handleWebhook(request);
+
+            // then
+            verify(webhookTransactionService, times(1))
+                    .completePendingPayment(eq(WEBHOOK_EVENT_ID), eq(PAYMENT_ID), any(PaymentMethod.class));
+            verify(webhookTransactionService, never()).markEventComplete(anyLong());
+        }
+
+        @Test
+        @DisplayName("실패 - FAILED Payment Lock 획득 실패 시 보정 스킵")
+        void handleWebhook_failedPayment_lockFailed_skips() throws Exception {
+            // given
+            WebhookRequest request = createWebhookRequest("Transaction.Paid", PAYMENT_KEY, TRANSACTION_ID, null);
+            WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID);
+            Payment payment = createMockPayment(PAYMENT_ID, PaymentStatus.FAILED);
+            PaidPayment paidPayment = mock(PaidPayment.class);
+            given(paidPayment.getMethod()).willReturn(mock(io.portone.sdk.server.payment.PaymentMethod.class));
+
+            given(objectMapper.writeValueAsString(any())).willReturn("{\"type\":\"Transaction.Paid\"}");
+            given(webhookTransactionService.prepareWebhookEvent(anyString(), any(), anyString(), anyString()))
+                    .willReturn(event);
+            given(paymentClient.getPayment(PAYMENT_KEY))
+                    .willReturn(CompletableFuture.completedFuture(paidPayment));
+            given(webhookTransactionService.getPaymentByKey(PAYMENT_KEY)).willReturn(payment);
+            given(redisUtil.acquireLock(anyString())).willReturn(false);
+
+            // when
+            webhookService.handleWebhook(request);
+
+            // then
+            verify(webhookTransactionService, never()).completePendingPayment(anyLong(), anyLong(), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("handleWebhook() - 환불 타임아웃 COMPLETED 결제 보정 (Transaction.Cancelled)")
+    class HandleWebhookCancelTimeoutRecoveryTest {
+
+        @Test
+        @DisplayName("성공 - COMPLETED Payment + CancelledPayment → finalizeRefundFromWebhook 호출")
+        void handleWebhook_completedPayment_cancelledWebhook_finalizesRefund() throws Exception {
+            // given
+            WebhookRequest request = createWebhookRequest("Transaction.Cancelled", PAYMENT_KEY, TRANSACTION_ID, CANCELLATION_ID);
+            WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID);
+            Payment payment = createMockPayment(PAYMENT_ID, PaymentStatus.COMPLETED);
+            CancelledPayment cancelledPayment = mock(CancelledPayment.class);
+
+            given(objectMapper.writeValueAsString(any())).willReturn("{\"type\":\"Transaction.Cancelled\"}");
+            given(webhookTransactionService.prepareWebhookEvent(anyString(), any(), anyString(), anyString()))
+                    .willReturn(event);
+            given(paymentClient.getPayment(PAYMENT_KEY))
+                    .willReturn(CompletableFuture.completedFuture(cancelledPayment));
+            given(webhookTransactionService.getPaymentByKey(PAYMENT_KEY)).willReturn(payment);
+
+            // when
+            webhookService.handleWebhook(request);
+
+            // then
+            verify(webhookTransactionService, times(1)).finalizeRefundFromWebhook(WEBHOOK_EVENT_ID, PAYMENT_ID);
+            verify(webhookTransactionService, never()).failPendingPayment(anyLong(), anyLong());
+            verify(webhookTransactionService, never()).markEventComplete(anyLong());
+        }
+
+        @Test
+        @DisplayName("성공 - COMPLETED Payment + PartialCancelledPayment → finalizeRefundFromWebhook 호출")
+        void handleWebhook_completedPayment_partialCancelledWebhook_finalizesRefund() throws Exception {
+            // given
+            WebhookRequest request = createWebhookRequest("Transaction.Cancelled", PAYMENT_KEY, TRANSACTION_ID, CANCELLATION_ID);
+            WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID);
+            Payment payment = createMockPayment(PAYMENT_ID, PaymentStatus.COMPLETED);
+            PartialCancelledPayment partialCancelledPayment = mock(PartialCancelledPayment.class);
+
+            given(objectMapper.writeValueAsString(any())).willReturn("{\"type\":\"Transaction.Cancelled\"}");
+            given(webhookTransactionService.prepareWebhookEvent(anyString(), any(), anyString(), anyString()))
+                    .willReturn(event);
+            given(paymentClient.getPayment(PAYMENT_KEY))
+                    .willReturn(CompletableFuture.completedFuture(partialCancelledPayment));
+            given(webhookTransactionService.getPaymentByKey(PAYMENT_KEY)).willReturn(payment);
+
+            // when
+            webhookService.handleWebhook(request);
+
+            // then
+            verify(webhookTransactionService, times(1)).finalizeRefundFromWebhook(WEBHOOK_EVENT_ID, PAYMENT_ID);
+        }
+
+        @Test
+        @DisplayName("Payment REFUNDED - 이미 환불 완료, WebhookEvent COMPLETE 처리")
+        void handleWebhook_refundedPayment_cancelledWebhook_marksEventComplete() throws Exception {
+            // given
+            WebhookRequest request = createWebhookRequest("Transaction.Cancelled", PAYMENT_KEY, TRANSACTION_ID, CANCELLATION_ID);
+            WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID);
+            Payment payment = createMockPayment(PAYMENT_ID, PaymentStatus.REFUNDED);
+            CancelledPayment cancelledPayment = mock(CancelledPayment.class);
+
+            given(objectMapper.writeValueAsString(any())).willReturn("{\"type\":\"Transaction.Cancelled\"}");
+            given(webhookTransactionService.prepareWebhookEvent(anyString(), any(), anyString(), anyString()))
+                    .willReturn(event);
+            given(paymentClient.getPayment(PAYMENT_KEY))
+                    .willReturn(CompletableFuture.completedFuture(cancelledPayment));
+            given(webhookTransactionService.getPaymentByKey(PAYMENT_KEY)).willReturn(payment);
+
+            // when
+            webhookService.handleWebhook(request);
+
+            // then
+            verify(webhookTransactionService, times(1)).markEventComplete(WEBHOOK_EVENT_ID);
+            verify(webhookTransactionService, never()).finalizeRefundFromWebhook(anyLong(), anyLong());
+        }
+
+        @Test
+        @DisplayName("Payment FAILED - 이미 실패 처리됨, WebhookEvent COMPLETE 처리")
+        void handleWebhook_failedPayment_cancelledWebhook_marksEventComplete() throws Exception {
+            // given
+            WebhookRequest request = createWebhookRequest("Transaction.Cancelled", PAYMENT_KEY, TRANSACTION_ID, CANCELLATION_ID);
+            WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID);
+            Payment payment = createMockPayment(PAYMENT_ID, PaymentStatus.FAILED);
+            CancelledPayment cancelledPayment = mock(CancelledPayment.class);
+
+            given(objectMapper.writeValueAsString(any())).willReturn("{\"type\":\"Transaction.Cancelled\"}");
+            given(webhookTransactionService.prepareWebhookEvent(anyString(), any(), anyString(), anyString()))
+                    .willReturn(event);
+            given(paymentClient.getPayment(PAYMENT_KEY))
+                    .willReturn(CompletableFuture.completedFuture(cancelledPayment));
+            given(webhookTransactionService.getPaymentByKey(PAYMENT_KEY)).willReturn(payment);
+
+            // when
+            webhookService.handleWebhook(request);
+
+            // then
+            verify(webhookTransactionService, times(1)).markEventComplete(WEBHOOK_EVENT_ID);
+            verify(webhookTransactionService, never()).finalizeRefundFromWebhook(anyLong(), anyLong());
         }
     }
 

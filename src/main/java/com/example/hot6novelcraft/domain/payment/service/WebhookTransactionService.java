@@ -121,9 +121,16 @@ public class WebhookTransactionService {
         Payment payment = paymentRepository.findById(paymentDbId)
                 .orElseThrow(() -> new ServiceErrorException(PaymentExceptionEnum.ERR_PAYMENT_NOT_FOUND));
 
-        // Redis Lock으로 이 케이스는 발생하지 않지만 방어 코드
-        if (payment.getStatus() != PaymentStatus.PENDING) {
-            log.info("웹훅 보정 스킵 - 이미 처리됨 paymentDbId={} status={}", paymentDbId, payment.getStatus());
+        // 이미 COMPLETED면 멱등성 보장
+        if (payment.getStatus() == PaymentStatus.COMPLETED) {
+            log.info("웹훅 보정 스킵 - 이미 COMPLETED paymentDbId={}", paymentDbId);
+            webhookEventRepository.findById(webhookEventId).ifPresent(WebhookEvent::complete);
+            return;
+        }
+
+        // PENDING 또는 FAILED(confirm 타임아웃으로 잘못 처리된 케이스) 허용, 그 외 skip
+        if (payment.getStatus() != PaymentStatus.PENDING && payment.getStatus() != PaymentStatus.FAILED) {
+            log.warn("웹훅 보정 스킵 - 처리 불가 상태 paymentDbId={} status={}", paymentDbId, payment.getStatus());
             webhookEventRepository.findById(webhookEventId).ifPresent(WebhookEvent::complete);
             return;
         }
@@ -176,5 +183,42 @@ public class WebhookTransactionService {
         webhookEventRepository.findById(webhookEventId).ifPresent(WebhookEvent::complete);
         log.info("웹훅 구독 결제 보정 완료 paymentDbId={} subscriptionId={} userId={}",
                 paymentDbId, subscriptionId, payment.getUserId());
+    }
+
+    /**
+     * [환불 타임아웃 보정] COMPLETED 결제를 REFUNDED로 전환한다.
+     *
+     * cancelPayment()에서 포트원 취소 API 타임아웃 발생 시:
+     *   - compensateDeduct()로 포인트 복구 후 Payment가 COMPLETED로 남는 케이스
+     *   - 이후 Transaction.Cancelled 웹훅 도착 시 이 메서드로 보정
+     *
+     * 포인트 처리 전략:
+     *   - compensateDeduct 실행됨 → 포인트 잔액 있음 → deduct 성공 → 정상 차감
+     *   - compensateDeduct 미실행 (서버 다운 등) → 이미 차감된 상태 → deduct 잔액 부족 예외 → 스킵
+     *   두 경우 모두 최종적으로 REFUNDED 상태가 되어 포트원 상태와 일치
+     */
+    @Transactional
+    public void finalizeRefundFromWebhook(Long webhookEventId, Long paymentDbId) {
+        Payment payment = paymentRepository.findById(paymentDbId)
+                .orElseThrow(() -> new ServiceErrorException(PaymentExceptionEnum.ERR_PAYMENT_NOT_FOUND));
+
+        if (payment.getStatus() != PaymentStatus.COMPLETED) {
+            log.info("웹훅 환불 보정 스킵 - 이미 처리됨 paymentDbId={} status={}", paymentDbId, payment.getStatus());
+            webhookEventRepository.findById(webhookEventId).ifPresent(WebhookEvent::complete);
+            return;
+        }
+
+        try {
+            pointService.deduct(payment.getUserId(), payment.getAmount());
+            log.info("웹훅 환불 보정: 포인트 차감 완료 userId={} amount={}P", payment.getUserId(), payment.getAmount());
+        } catch (ServiceErrorException e) {
+            // compensateDeduct 미실행 케이스 — 포인트가 이미 차감된 상태이므로 스킵
+            log.warn("웹훅 환불 보정: 포인트 잔액 부족으로 차감 스킵 (이미 차감된 상태) userId={} amount={}P",
+                    payment.getUserId(), payment.getAmount());
+        }
+
+        payment.cancel();
+        webhookEventRepository.findById(webhookEventId).ifPresent(WebhookEvent::complete);
+        log.info("웹훅 환불 보정 완료 (COMPLETED→REFUNDED) paymentDbId={} userId={}", paymentDbId, payment.getUserId());
     }
 }
