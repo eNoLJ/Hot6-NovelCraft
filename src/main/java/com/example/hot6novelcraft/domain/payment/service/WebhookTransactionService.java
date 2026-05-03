@@ -219,17 +219,15 @@ public class WebhookTransactionService {
             pointService.deduct(payment.getUserId(), payment.getAmount());
             log.info("웹훅 환불 보정: 포인트 차감 완료 userId={} amount={}P", payment.getUserId(), payment.getAmount());
         } catch (ServiceErrorException e) {
-            if (e.getErrorCode() == PaymentExceptionEnum.ERR_INSUFFICIENT_POINT) {
-                // compensateDeduct 미실행 케이스 — 포인트가 이미 차감된 상태이므로 스킵
-                log.warn("웹훅 환불 보정: 포인트 잔액 부족으로 차감 스킵 (이미 차감된 상태) userId={} amount={}P",
-                        payment.getUserId(), payment.getAmount());
-            } else {
-                // ERR_POINT_NOT_FOUND 등 예상치 못한 오류 — 데이터 정합성 문제, 환불 중단
-                log.error("웹훅 환불 보정 실패: 포인트 차감 오류 userId={} amount={}P error={}",
-                        payment.getUserId(), payment.getAmount(), e.getMessage());
-                webhookEventRepository.findById(webhookEventId).ifPresent(event -> event.fail(e.getMessage()));
-                return;
-            }
+            // compensateDeduct 실행 여부를 알 수 없어 "이미 차감됨"으로 단정 불가.
+            // ERR_INSUFFICIENT_POINT 이어도 compensateDeduct 실행 후 사용자가 포인트를 소비한 케이스이면
+            // payment.cancel()까지 가면 환불 금액 + 포인트 소비를 둘 다 취득하는 손실이 발생한다.
+            // ERR_POINT_NOT_FOUND 등 다른 오류도 마찬가지로 데이터 정합성 문제.
+            // 모든 차감 오류는 FAIL로 남겨 수동 보정 경로로 보낸다.
+            log.error("웹훅 환불 보정 실패: 포인트 차감 오류 — 수동 보정 필요 userId={} amount={}P error={}",
+                    payment.getUserId(), payment.getAmount(), e.getMessage());
+            webhookEventRepository.findById(webhookEventId).ifPresent(event -> event.fail(e.getMessage()));
+            return;
         }
 
         payment.cancel();

@@ -136,7 +136,16 @@ public class WebhookService {
             // COMPLETED → 환불 타임아웃 케이스: compensateDeduct 이후 포트원은 취소됐으나 DB가 COMPLETED로 남은 경우
             if (payment.getStatus() == PaymentStatus.COMPLETED) {
                 log.info("웹훅 환불 보정 시작 (COMPLETED→REFUNDED) paymentId={}", paymentId);
-                webhookTransactionService.finalizeRefundFromWebhook(webhookEvent.getId(), payment.getId());
+                String cancelLockKey = "payment:cancel:lock:" + paymentId;
+                if (!redisUtil.acquireLock(cancelLockKey)) {
+                    log.warn("웹훅 환불 보정: Lock 획득 실패 (처리 중) paymentId={} → 포트원이 재시도 예정", paymentId);
+                    return;
+                }
+                try {
+                    webhookTransactionService.finalizeRefundFromWebhook(webhookEvent.getId(), payment.getId());
+                } finally {
+                    redisUtil.releaseLock(cancelLockKey);
+                }
                 return;
             }
             // PENDING → 결제창 열린 후 완료 전 취소된 케이스

@@ -546,9 +546,10 @@ class WebhookTransactionServiceTest {
         }
 
         @Test
-        @DisplayName("성공 - COMPLETED → REFUNDED 전환, 포인트 잔액 부족 시 차감 스킵 (compensateDeduct 미실행 케이스)")
-        void finalizeRefundFromWebhook_pointsAlreadyDeducted_skipsDeductAndRefunds() {
-            // given
+        @DisplayName("실패 - ERR_INSUFFICIENT_POINT 발생 시 이벤트 FAIL + payment.cancel() 미호출 (수동 보정 필요)")
+        void finalizeRefundFromWebhook_insufficientPoint_marksEventFailedAndAborts() {
+            // given — compensateDeduct 실행 후 사용자가 복원 포인트를 소비한 케이스와 구분 불가
+            //         단정하고 cancel()까지 가면 환불 금액 + 포인트 소비를 둘 다 취득하는 손실 발생
             Payment payment = createMockPayment(PAYMENT_ID, USER_ID, PaymentStatus.COMPLETED);
             WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID, WebhookEventStatus.PENDING);
 
@@ -560,10 +561,9 @@ class WebhookTransactionServiceTest {
             // when
             transactionService.finalizeRefundFromWebhook(WEBHOOK_EVENT_ID, PAYMENT_ID);
 
-            // then - 포인트 차감 실패해도 REFUNDED 전환은 수행
-            verify(pointService, times(1)).deduct(USER_ID, AMOUNT);
-            verify(payment, times(1)).cancel();
-            verify(event, times(1)).complete();
+            // then — REFUNDED로 바꾸면 안 되고, 이벤트는 FAIL로 남겨 수동 보정 경로로 보내야 함
+            verify(payment, never()).cancel();
+            verify(event, times(1)).fail(PaymentExceptionEnum.ERR_INSUFFICIENT_POINT.getMessage());
         }
 
         @Test

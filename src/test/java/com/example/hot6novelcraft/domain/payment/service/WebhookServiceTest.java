@@ -428,7 +428,7 @@ class WebhookServiceTest {
     class HandleWebhookCancelTimeoutRecoveryTest {
 
         @Test
-        @DisplayName("성공 - COMPLETED Payment + CancelledPayment → finalizeRefundFromWebhook 호출")
+        @DisplayName("성공 - COMPLETED Payment + CancelledPayment → Lock 획득 후 finalizeRefundFromWebhook 호출")
         void handleWebhook_completedPayment_cancelledWebhook_finalizesRefund() throws Exception {
             // given
             WebhookRequest request = createWebhookRequest("Transaction.Cancelled", PAYMENT_KEY, TRANSACTION_ID, CANCELLATION_ID);
@@ -442,14 +442,69 @@ class WebhookServiceTest {
             given(paymentClient.getPayment(PAYMENT_KEY))
                     .willReturn(CompletableFuture.completedFuture(cancelledPayment));
             given(webhookTransactionService.getPaymentByKey(PAYMENT_KEY)).willReturn(payment);
+            given(redisUtil.acquireLock(anyString())).willReturn(true);
 
             // when
             webhookService.handleWebhook(request);
 
             // then
+            verify(redisUtil, times(1)).acquireLock("payment:cancel:lock:" + PAYMENT_KEY);
             verify(webhookTransactionService, times(1)).finalizeRefundFromWebhook(WEBHOOK_EVENT_ID, PAYMENT_ID);
+            verify(redisUtil, times(1)).releaseLock("payment:cancel:lock:" + PAYMENT_KEY);
             verify(webhookTransactionService, never()).failPendingPayment(anyLong(), anyLong());
             verify(webhookTransactionService, never()).markEventComplete(anyLong());
+        }
+
+        @Test
+        @DisplayName("실패 - COMPLETED Payment + CancelledPayment → Lock 획득 실패 시 환불 보정 스킵")
+        void handleWebhook_completedPayment_cancelledWebhook_lockFailed_skips() throws Exception {
+            // given — 동일 웹훅 재시도가 이미 처리 중인 상황
+            WebhookRequest request = createWebhookRequest("Transaction.Cancelled", PAYMENT_KEY, TRANSACTION_ID, CANCELLATION_ID);
+            WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID);
+            Payment payment = createMockPayment(PAYMENT_ID, PaymentStatus.COMPLETED);
+            CancelledPayment cancelledPayment = mock(CancelledPayment.class);
+
+            given(objectMapper.writeValueAsString(any())).willReturn("{\"type\":\"Transaction.Cancelled\"}");
+            given(webhookTransactionService.prepareWebhookEvent(anyString(), any(), anyString(), anyString()))
+                    .willReturn(event);
+            given(paymentClient.getPayment(PAYMENT_KEY))
+                    .willReturn(CompletableFuture.completedFuture(cancelledPayment));
+            given(webhookTransactionService.getPaymentByKey(PAYMENT_KEY)).willReturn(payment);
+            given(redisUtil.acquireLock(anyString())).willReturn(false);
+
+            // when
+            webhookService.handleWebhook(request);
+
+            // then — 이중 포인트 차감 방지: finalizeRefundFromWebhook 미호출
+            verify(webhookTransactionService, never()).finalizeRefundFromWebhook(anyLong(), anyLong());
+            verify(redisUtil, never()).releaseLock(anyString());
+        }
+
+        @Test
+        @DisplayName("검증 - COMPLETED + CancelledPayment → 예외 발생 시에도 Lock이 finally 블록에서 해제됨")
+        void handleWebhook_completedPayment_cancelledWebhook_lockReleasedInFinally() throws Exception {
+            // given
+            WebhookRequest request = createWebhookRequest("Transaction.Cancelled", PAYMENT_KEY, TRANSACTION_ID, CANCELLATION_ID);
+            WebhookEvent event = createMockWebhookEvent(WEBHOOK_EVENT_ID);
+            Payment payment = createMockPayment(PAYMENT_ID, PaymentStatus.COMPLETED);
+            CancelledPayment cancelledPayment = mock(CancelledPayment.class);
+
+            given(objectMapper.writeValueAsString(any())).willReturn("{\"type\":\"Transaction.Cancelled\"}");
+            given(webhookTransactionService.prepareWebhookEvent(anyString(), any(), anyString(), anyString()))
+                    .willReturn(event);
+            given(paymentClient.getPayment(PAYMENT_KEY))
+                    .willReturn(CompletableFuture.completedFuture(cancelledPayment));
+            given(webhookTransactionService.getPaymentByKey(PAYMENT_KEY)).willReturn(payment);
+            given(redisUtil.acquireLock(anyString())).willReturn(true);
+            doThrow(new RuntimeException("DB 오류")).when(webhookTransactionService)
+                    .finalizeRefundFromWebhook(anyLong(), anyLong());
+
+            // when & then
+            try {
+                webhookService.handleWebhook(request);
+            } catch (Exception ignored) {}
+
+            verify(redisUtil, times(1)).releaseLock("payment:cancel:lock:" + PAYMENT_KEY);
         }
 
         @Test
