@@ -51,17 +51,13 @@ public class RedisUtil {
     // 블랙리스트 조회 실패 시 블랙리스트가 아닌 것으로 처리
     public boolean isBlackList(String accessToken) {
         try {
-            if (Boolean.TRUE.equals(redisTemplate.hasKey(accessToken))) {
-                return true;
-            }
-
-            // Redis 장애 중 DB로만 들어간 항목을 놓치지 않도록 보조 확인
+            return Boolean.TRUE.equals(redisTemplate.hasKey(accessToken));
         } catch (RedisConnectionFailureException | QueryTimeoutException e) {
-            log.error("[Redis Blacklist] 조회 실패, DB fallback 실행, reason: {}", e.getMessage());
-        }
+            log.error("[Redis Blacklist] 조회 실패, DB fallback 실행, accessToken: {}, reason: {}", accessToken, e.getMessage());
 
-        // DB fallback : Redis 없어도 블랙리스트 토큰은 차단
-        return blacklistTokenRepository.existsByToken(accessToken);
+            // DB fallback : Redis 없어도 블랙리스트 토큰 차단
+            return blacklistTokenRepository.existsByToken(accessToken);
+        }
     }
 
     /** === SMS 서비스 - 원자적 getAndDelete === **/
