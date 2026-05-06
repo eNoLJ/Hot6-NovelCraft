@@ -55,13 +55,13 @@ public class RedisUtil {
                 return true;
             }
 
-        // Redis 장애 중 DB로만 들어간 항목을 놓치지 않도록 보조 확인
+            // Redis 장애 중 DB로만 들어간 항목을 놓치지 않도록 보조 확인
         } catch (RedisConnectionFailureException | QueryTimeoutException e) {
             log.error("[Redis Blacklist] 조회 실패, DB fallback 실행, reason: {}", e.getMessage());
-
-            // DB fallback : Redis 없어도 블랙리스트 토큰은 차단
-            return blacklistTokenRepository.existsByToken(accessToken);
         }
+
+        // DB fallback : Redis 없어도 블랙리스트 토큰은 차단
+        return blacklistTokenRepository.existsByToken(accessToken);
     }
 
     /** === SMS 서비스 - 원자적 getAndDelete === **/
