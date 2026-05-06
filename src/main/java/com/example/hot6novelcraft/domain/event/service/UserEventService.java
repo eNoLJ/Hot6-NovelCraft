@@ -6,20 +6,14 @@ import com.example.hot6novelcraft.domain.event.dto.response.EventDetailResponse;
 import com.example.hot6novelcraft.domain.event.dto.response.EventParticipateResponse;
 import com.example.hot6novelcraft.domain.event.dto.response.EventSummaryResponse;
 import com.example.hot6novelcraft.domain.event.entity.Event;
-import com.example.hot6novelcraft.domain.event.entity.EventParticipant;
 import com.example.hot6novelcraft.domain.event.entity.enums.EventStatus;
-import com.example.hot6novelcraft.domain.event.repository.EventParticipantRepository;
 import com.example.hot6novelcraft.domain.event.repository.EventRepository;
-import com.example.hot6novelcraft.domain.point.service.PointService;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
-import org.springframework.context.annotation.Bean;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.redis.core.RedisTemplate;
@@ -40,8 +34,7 @@ public class UserEventService {
     private static final String EVENT_LOCK_KEY          = "lock:event:participate:";
 
     private final EventRepository eventRepository;
-    private final EventParticipantRepository eventParticipantRepository;
-    private final PointService pointService;
+    private final EventParticipateService eventParticipateService;
     private final RedissonClient redissonClient;
     private final RedisTemplate<String, Object> redisTemplate;
     private final ObjectMapper objectMapper;
@@ -97,7 +90,6 @@ public class UserEventService {
 
         EventDetailResponse response = EventDetailResponse.from(event);
 
-        // 종료된 이벤트만 장기 캐싱 (TTL 7일)
         if (event.isEnded()) {
             redisTemplate.opsForValue().set(cacheKey, response, Duration.ofDays(7));
         }
@@ -105,45 +97,19 @@ public class UserEventService {
         return response;
     }
 
-    // ===================== 이벤트 참여 신청 (Redisson 분산락 + 즉시 포인트 지급) =====================
+    // ===================== 이벤트 참여 신청 (Redisson 분산락) =====================
 
-    @Transactional
     public EventParticipateResponse participate(Long eventId, Long userId) {
         RLock lock = redissonClient.getLock(EVENT_LOCK_KEY + eventId);
 
         try {
-            boolean acquired = lock.tryLock(5, 3, TimeUnit.SECONDS);
+            boolean acquired = lock.tryLock(5, TimeUnit.SECONDS);
             if (!acquired) {
                 throw new ServiceErrorException(EventExceptionEnum.EVENT_LOCK_ACQUIRE_FAILED);
             }
 
-            Event event = eventRepository.findById(eventId)
-                    .orElseThrow(() -> new ServiceErrorException(EventExceptionEnum.EVENT_NOT_FOUND));
-
-            // 진행 중인 이벤트 여부 검증
-            if (!event.isOngoing()) {
-                throw new ServiceErrorException(EventExceptionEnum.EVENT_NOT_ONGOING);
-            }
-
-            // 중복 참여 검증
-            if (eventParticipantRepository.existsByEventIdAndUserId(eventId, userId)) {
-                throw new ServiceErrorException(EventExceptionEnum.EVENT_ALREADY_PARTICIPATED);
-            }
-
-            // 선착순 인원 검증
-            long currentCount = eventParticipantRepository.countByEventId(eventId);
-            if (currentCount >= event.getMaxParticipants()) {
-                throw new ServiceErrorException(EventExceptionEnum.EVENT_PARTICIPANTS_FULL);
-            }
-
-            // 참여자 저장
-            EventParticipant participant = EventParticipant.create(eventId, userId);
-            eventParticipantRepository.save(participant);
-
-            // 포인트 즉시 지급 (PointHistoryType.EVENT)
-            pointService.chargeEventReward(userId, event.getRewardPoints(), eventId);
-
-            return EventParticipateResponse.from(participant, event.getRewardPoints());
+            // 트랜잭션이 커밋된 후에 락이 해제되도록 별도 서비스에서 실행
+            return eventParticipateService.execute(eventId, userId);
 
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

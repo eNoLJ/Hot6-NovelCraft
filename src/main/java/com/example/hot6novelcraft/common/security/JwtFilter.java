@@ -82,7 +82,9 @@ public class JwtFilter extends OncePerRequestFilter {
                 || path.equals("/chat-test.html")
                 || path.equals("/subscription-test.html")
                 || path.equals("/notification-test.html")
-                || path.equals("/error");
+                || path.equals("/error")
+                || path.startsWith("/actuator");
+
     }
 
     @Override
