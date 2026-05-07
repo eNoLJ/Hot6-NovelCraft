@@ -11,17 +11,17 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/api/author/episodes")
+@RequestMapping("/api/ai/author")
 public class AiReviewController {
 
     private final AiReviewService aiReviewService;
 
     /**
-     * AI 리뷰 받기
+     * AI 리뷰 받기 v1
      * - episodeId의 본문을 기반으로 AI가 평점 + 독자 댓글 생성
      * 정은식
      */
-    @PostMapping("/{episodeId}/ai-review")
+    @PostMapping("v1/episodes/{episodeId}/ai-review")
     public ResponseEntity<BaseResponse<AiReviewResponse>> getAiReview(
             @PathVariable Long episodeId,
             @AuthenticationPrincipal UserDetailsImpl userDetails
@@ -32,4 +32,10 @@ public class AiReviewController {
                 BaseResponse.success("200", "AI 리뷰 조회 성공", response)
         );
     }
+
+    /**
+     * AI 리뷰 받기 v2
+     * - 기존 방식 + Kafka비동기 + OpenAi장애대응폴백 + 분산락
+     * 정은식
+     */
 }
