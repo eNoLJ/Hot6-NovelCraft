@@ -3,6 +3,7 @@ package com.example.hot6novelcraft.domain.coverai.consumer;
 import com.example.hot6novelcraft.domain.coverai.client.GeminiClient;
 import com.example.hot6novelcraft.domain.coverai.dto.event.CoverGenerationEvent;
 import com.example.hot6novelcraft.domain.coverai.entity.CoverJob;
+import com.example.hot6novelcraft.domain.coverai.entity.enums.CoverJobStatus;
 import com.example.hot6novelcraft.domain.coverai.repository.CoverJobRepository;
 import com.example.hot6novelcraft.domain.novel.entity.Novel;
 import com.example.hot6novelcraft.domain.novel.repository.NovelRepository;
@@ -55,8 +56,16 @@ public class CoverGenerationConsumer {
         CoverJob job = coverJobRepository.findByJobId(event.jobId())
                 .orElseThrow(() -> new IllegalStateException("Job not found: " + event.jobId()));
 
+        // 1번 - 중복 이벤트 방어
+        if (job.getStatus() != CoverJobStatus.PENDING) {
+            log.warn("[Cover] 이미 처리된 Job 스킵 jobId={} status={}", event.jobId(), job.getStatus());
+            return;
+        }
+
         job.processing();
         coverJobRepository.save(job);
+
+        boolean isDeducted = false; // 2번 - 차감 여부 플래그
 
         try {
             // 1. 소설/유저 정보 조회
@@ -73,6 +82,7 @@ public class CoverGenerationConsumer {
 
             // 4. 포인트 차감 및 이력 저장
             pointService.deduct(event.userId(), COVER_COST);
+            isDeducted = true; // 차감 완료 플래그
             pointHistoryRepository.save(
                     PointHistory.create(event.userId(), event.novelId(), null, COVER_COST,
                             PointHistoryType.AI_COVER, "AI 소설 표지 생성")
@@ -88,16 +98,18 @@ public class CoverGenerationConsumer {
             job.fail(e.getMessage());
             coverJobRepository.save(job);
 
-            // 포인트 환불
-            try {
-                pointService.charge(event.userId(), COVER_COST);
-                pointHistoryRepository.save(
-                        PointHistory.create(event.userId(), event.novelId(), null, COVER_COST,
-                                PointHistoryType.CHARGE, "AI 표지 생성 실패 환불")
-                );
-                log.info("[Cover] 포인트 환불 완료 userId={}", event.userId());
-            } catch (Exception refundEx) {
-                log.error("[Cover] 포인트 환불 실패 userId={}", event.userId(), refundEx);
+            // 2번 - 차감된 경우에만 환불
+            if (isDeducted) {
+                try {
+                    pointService.charge(event.userId(), COVER_COST);
+                    pointHistoryRepository.save(
+                            PointHistory.create(event.userId(), event.novelId(), null, COVER_COST,
+                                    PointHistoryType.CHARGE, "AI 표지 생성 실패 환불")
+                    );
+                    log.info("[Cover] 포인트 환불 완료 userId={}", event.userId());
+                } catch (Exception refundEx) {
+                    log.error("[Cover] 포인트 환불 실패 userId={}", event.userId(), refundEx);
+                }
             }
         }
     }

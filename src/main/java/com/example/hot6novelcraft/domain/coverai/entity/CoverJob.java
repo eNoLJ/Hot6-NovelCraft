@@ -50,10 +50,12 @@ public class CoverJob extends BaseEntity {
     public void complete(String coverImageUrl) {
         this.status = CoverJobStatus.COMPLETED;
         this.coverImageUrl = coverImageUrl;
+        this.errorMessage = null;
     }
 
     public void fail(String errorMessage) {
         this.status = CoverJobStatus.FAILED;
         this.errorMessage = errorMessage;
+        this.coverImageUrl = null;
     }
 }

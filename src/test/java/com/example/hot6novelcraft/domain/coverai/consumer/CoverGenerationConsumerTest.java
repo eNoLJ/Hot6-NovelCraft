@@ -30,6 +30,7 @@ import software.amazon.awssdk.services.s3.model.PutObjectResponse;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.BDDMockito.given;
 import static org.mockito.Mockito.*;
@@ -104,30 +105,42 @@ class CoverGenerationConsumerTest {
     }
 
     @Test
-    @DisplayName("Gemini 호출 3회 실패 - FAILED 상태 및 포인트 환불")
-    void consume_geminiFailure_refund() {
+    @DisplayName("이미 처리된 Job 중복 이벤트 스킵")
+    void consume_duplicateEvent_skip() {
+        // given
+        CoverJob completedJob = CoverJob.create("test-job-id", 1L, 1L);
+        completedJob.complete("https://s3.amazonaws.com/test.png");
+        given(coverJobRepository.findByJobId("test-job-id")).willReturn(Optional.of(completedJob));
+
+        // when
+        consumer.consume(event);
+
+        // then - Gemini 호출 안 됨
+        verify(geminiClient, never()).generateImage(any());
+        verify(pointService, never()).deduct(any(), any());
+    }
+
+    @Test
+    @DisplayName("Gemini 실패 시 차감 전이면 환불 안 함")
+    void consume_geminiFailure_noRefundIfNotDeducted() {
         // given
         given(coverJobRepository.findByJobId("test-job-id")).willReturn(Optional.of(job));
         given(novelRepository.findByIdAndIsDeletedFalse(1L)).willReturn(Optional.of(novel));
         given(userRepository.findById(1L)).willReturn(Optional.of(author));
-        given(geminiClient.generateImage(any())).willThrow(new RuntimeException("Gemini 연결 실패"));
+        given(geminiClient.generateImage(any())).willThrow(new RuntimeException("Gemini 실패"));
 
         // when
         consumer.consume(event);
 
         // then
         assertThat(job.getStatus()).isEqualTo(CoverJobStatus.FAILED);
-        assertThat(job.getErrorMessage()).isNotNull();
-
-        // 포인트 차감 안 됨
         verify(pointService, never()).deduct(any(), any());
-        // 포인트 환불
-        verify(pointService).charge(1L, 300L);
+        verify(pointService, never()).charge(any(), any()); // 차감 안 됐으니 환불도 없음
     }
 
     @Test
-    @DisplayName("S3 업로드 3회 실패 - FAILED 상태 및 포인트 환불")
-    void consume_s3Failure_refund() {
+    @DisplayName("S3 업로드 3회 실패 - FAILED 상태 및 포인트 환불 없음")
+    void consume_s3Failure_noRefund() {
         // given
         given(coverJobRepository.findByJobId("test-job-id")).willReturn(Optional.of(job));
         given(novelRepository.findByIdAndIsDeletedFalse(1L)).willReturn(Optional.of(novel));
@@ -141,11 +154,30 @@ class CoverGenerationConsumerTest {
 
         // then
         assertThat(job.getStatus()).isEqualTo(CoverJobStatus.FAILED);
-
-        // 포인트 차감 안 됨
         verify(pointService, never()).deduct(any(), any());
-        // 포인트 환불
-        verify(pointService).charge(1L, 300L);
+        verify(pointService, never()).charge(any(), any()); // 차감 전 실패라 환불 없음
+    }
+
+    @Test
+    @DisplayName("포인트 차감 후 DB 저장 실패 - FAILED 상태 및 포인트 환불")
+    void consume_afterDeductFailure_refund() {
+        // given
+        given(coverJobRepository.findByJobId("test-job-id")).willReturn(Optional.of(job));
+        given(novelRepository.findByIdAndIsDeletedFalse(1L)).willReturn(Optional.of(novel));
+        given(userRepository.findById(1L)).willReturn(Optional.of(author));
+        given(geminiClient.generateImage(any())).willReturn(new byte[]{1, 2, 3});
+        given(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
+                .willReturn(PutObjectResponse.builder().build());
+        given(pointHistoryRepository.save(any(PointHistory.class)))
+                .willThrow(new RuntimeException("DB 저장 실패")); // 차감 후 실패
+
+        // when
+        consumer.consume(event);
+
+        // then
+        assertThat(job.getStatus()).isEqualTo(CoverJobStatus.FAILED);
+        verify(pointService).deduct(1L, 300L); // 차감은 됨
+        verify(pointService).charge(1L, 300L); // 환불도 됨
     }
 
     @Test
@@ -157,7 +189,7 @@ class CoverGenerationConsumerTest {
         given(userRepository.findById(1L)).willReturn(Optional.of(author));
         given(geminiClient.generateImage(any()))
                 .willThrow(new RuntimeException("일시적 오류"))
-                .willReturn(new byte[]{1, 2, 3}); // 2번째 성공
+                .willReturn(new byte[]{1, 2, 3});
         given(s3Client.putObject(any(PutObjectRequest.class), any(RequestBody.class)))
                 .willReturn(PutObjectResponse.builder().build());
         given(pointHistoryRepository.save(any())).willReturn(null);
@@ -167,7 +199,7 @@ class CoverGenerationConsumerTest {
 
         // then
         assertThat(job.getStatus()).isEqualTo(CoverJobStatus.COMPLETED);
-        verify(geminiClient, times(2)).generateImage(any()); // 2번 호출됨
+        verify(geminiClient, times(2)).generateImage(any());
         verify(pointService).deduct(1L, 300L);
     }
 
@@ -176,11 +208,10 @@ class CoverGenerationConsumerTest {
     void consume_jobNotFound() {
         // given
         given(coverJobRepository.findByJobId("invalid-id")).willReturn(Optional.empty());
-
         CoverGenerationEvent invalidEvent = new CoverGenerationEvent("invalid-id", 1L, 1L);
 
         // when & then
-        org.assertj.core.api.Assertions.assertThatThrownBy(() -> consumer.consume(invalidEvent))
+        assertThatThrownBy(() -> consumer.consume(invalidEvent))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessageContaining("Job not found");
     }

@@ -2,10 +2,10 @@ package com.example.hot6novelcraft.domain.coverai.service;
 
 import com.example.hot6novelcraft.common.exception.ServiceErrorException;
 import com.example.hot6novelcraft.domain.coverai.dto.event.CoverGenerationEvent;
+import com.example.hot6novelcraft.domain.coverai.dto.event.CoverJobCreatedEvent;
 import com.example.hot6novelcraft.domain.coverai.dto.response.CoverJobResponse;
 import com.example.hot6novelcraft.domain.coverai.entity.CoverJob;
 import com.example.hot6novelcraft.domain.coverai.entity.enums.CoverJobStatus;
-import com.example.hot6novelcraft.domain.coverai.producer.CoverGenerationProducer;
 import com.example.hot6novelcraft.domain.coverai.repository.CoverJobRepository;
 import com.example.hot6novelcraft.domain.novel.entity.Novel;
 import com.example.hot6novelcraft.domain.novel.entity.enums.NovelStatus;
@@ -21,6 +21,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.test.util.ReflectionTestUtils;
 
 import java.util.Optional;
@@ -40,7 +41,7 @@ class CoverServiceTest {
     @Mock private UserRepository userRepository;
     @Mock private NovelRepository novelRepository;
     @Mock private CoverJobRepository coverJobRepository;
-    @Mock private CoverGenerationProducer coverGenerationProducer;
+    @Mock private ApplicationEventPublisher eventPublisher;
 
     private User author;
     private User reader;
@@ -86,7 +87,7 @@ class CoverServiceTest {
         assertThat(response.coverImageUrl()).isNull();
 
         verify(coverJobRepository).save(any(CoverJob.class));
-        verify(coverGenerationProducer).publish(any(CoverGenerationEvent.class));
+        verify(eventPublisher).publishEvent(any(CoverJobCreatedEvent.class));
     }
 
     @Test
@@ -97,14 +98,14 @@ class CoverServiceTest {
         given(novelRepository.findByIdAndIsDeletedFalse(1L)).willReturn(Optional.of(novel));
         given(coverJobRepository.save(any(CoverJob.class))).willAnswer(invocation -> invocation.getArgument(0));
 
-        ArgumentCaptor<CoverGenerationEvent> eventCaptor = ArgumentCaptor.forClass(CoverGenerationEvent.class);
+        ArgumentCaptor<CoverJobCreatedEvent> eventCaptor = ArgumentCaptor.forClass(CoverJobCreatedEvent.class);
 
         // when
         CoverJobResponse response = coverService.generateCover(1L, 1L);
 
         // then
-        verify(coverGenerationProducer).publish(eventCaptor.capture());
-        CoverGenerationEvent event = eventCaptor.getValue();
+        verify(eventPublisher).publishEvent(eventCaptor.capture());
+        CoverJobCreatedEvent event = eventCaptor.getValue();
         assertThat(event.jobId()).isEqualTo(response.jobId());
         assertThat(event.novelId()).isEqualTo(1L);
         assertThat(event.userId()).isEqualTo(1L);
