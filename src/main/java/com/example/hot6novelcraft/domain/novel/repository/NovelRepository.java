@@ -38,4 +38,22 @@ public interface NovelRepository extends JpaRepository<Novel, Long>, CustomNovel
     @Query("UPDATE Novel n SET n.bookmarkCount = n.bookmarkCount - 1 WHERE n.id = :novelId AND n.bookmarkCount > 0")
     void decrementBookmarkCount(@Param("novelId") Long novelId);
 
+    // AI 추천 - 사용자가 좋아요한 회차 소설 태그 수집
+    @Query("SELECT DISTINCT n.tags FROM Novel n JOIN Episode e ON e.novelId = n.id JOIN EpisodeLike el ON el.episodeId = e.id WHERE el.userId = :userId AND n.isDeleted = false")
+    List<String> findTagsByUserLikedEpisodes(@Param("userId") Long userId);
+
+    // AI 추천 - 추천 후보 소설 (발행, 완결 상태 / 최신순 50개)
+    @Query("SELECT n FROM Novel n WHERE n.isDeleted = false AND n.status IN ('ONGOING', 'COMPLETED') ORDER BY n.createdAt DESC LIMIT 50")
+    List<Novel> findTop50ForRecommendation();
+
+    // AI 추천 - 특정 장르 소설 (선호 장르용)
+    @Query("SELECT n FROM Novel n WHERE n.isDeleted = false AND n.status IN ('ONGOING', 'COMPLETED') AND n. genre = :genre ORDER BY n.viewCount DESC LIMIT :limit")
+    List<Novel> findByGenreForRecommendation(@Param("genre") String genre, @Param("limit") int limit);
+
+    // AI 추천 - 특정 장르 제외 소설 (다양성용)
+    @Query("SELECT n FROM Novel n WHERE n.isDeleted = false AND n.status IN ('ONGOING', 'COMPLETED') AND n. genre != :genre ORDER BY n.viewCount DESC LIMIT :limit")
+    List<Novel> findExcludeGenreForRecommendation(@Param("genre") String genre, @Param("limit") int limit);
+
+    // AI 추천 - DB fallback
+    List<Novel> findTop10ByIsDeletedFalseOrderByViewCountDesc();
 }
