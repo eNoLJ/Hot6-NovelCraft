@@ -38,57 +38,56 @@ pipeline {
         stage('Deploy to EC2') {
             steps {
                 withCredentials([
-                    // ===== DB =====
                     string(credentialsId: 'db-url',              variable: 'DB_URL'),
                     string(credentialsId: 'db-username',         variable: 'DB_USERNAME'),
                     string(credentialsId: 'db-password',         variable: 'DB_PASSWORD'),
-                    // ===== AES 암호화 =====
                     string(credentialsId: 'aes-secret-key',      variable: 'AES_SECRET_KEY'),
                     string(credentialsId: 'aes-iv',              variable: 'AES_IV'),
-                    // ===== AWS S3 =====
                     string(credentialsId: 'aws-access-key',      variable: 'AWS_ACCESS_KEY'),
                     string(credentialsId: 'aws-secret-key',      variable: 'AWS_SECRET_KEY'),
                     string(credentialsId: 's3-bucket-name',      variable: 'S3_BUCKET_NAME'),
-                    // ===== OAuth2 =====
                     string(credentialsId: 'google-client-id',    variable: 'GOOGLE_CLIENT_ID'),
                     string(credentialsId: 'google-client-secret', variable: 'GOOGLE_CLIENT_SECRET'),
                     string(credentialsId: 'kakao-client-id',     variable: 'KAKAO_CLIENT_ID'),
                     string(credentialsId: 'kakao-client-secret', variable: 'KAKAO_CLIENT_SECRET'),
                     string(credentialsId: 'naver-client-id',     variable: 'NAVER_CLIENT_ID'),
                     string(credentialsId: 'naver-client-secret', variable: 'NAVER_CLIENT_SECRET'),
-                    // ===== JWT =====
                     string(credentialsId: 'jwt-secret-key',      variable: 'JWT_SECRET_KEY'),
-                    // ===== PortOne =====
                     string(credentialsId: 'portone-channel-key',     variable: 'PORTONE_CHANNEL_KEY'),
                     string(credentialsId: 'portone-api-secret',      variable: 'PORTONE_API_SECRET'),
                     string(credentialsId: 'portone-webhook-secret',  variable: 'PORTONE_WEBHOOK_SECRET'),
-                    // ===== CoolSMS =====
                     string(credentialsId: 'coolsms-api-key',     variable: 'COOLSMS_API_KEY'),
                     string(credentialsId: 'coolsms-secret-key',  variable: 'COOLSMS_SECRET_KEY'),
-                    // ===== 국립도서관 =====
                     string(credentialsId: 'library-api-key',     variable: 'LIBRARY_API_KEY'),
-                    // ===== AI =====
                     string(credentialsId: 'openai-api-key',      variable: 'OPENAI_API_KEY'),
                     string(credentialsId: 'gemini-api-key',      variable: 'GEMINI_API_KEY'),
-                    // ===== PGVector =====
                     string(credentialsId: 'pgvector-url',        variable: 'PGVECTOR_URL'),
                     string(credentialsId: 'pgvector-username',   variable: 'PGVECTOR_USERNAME'),
                     string(credentialsId: 'pgvector-password',   variable: 'PGVECTOR_PASSWORD'),
-                    // ===== Kafka =====
                     string(credentialsId: 'kafka-bootstrap-servers', variable: 'KAFKA_BOOTSTRAP_SERVERS'),
-                    // ===== Redis Sentinel =====
                     string(credentialsId: 'redis-sentinel-nodes',  variable: 'REDIS_SENTINEL_NODES'),
                 ]) {
                     sshagent(['app-ec2-ssh-key']) {
+                        // docker-compose.yml EC2로 전송
+                        sh "scp -o StrictHostKeyChecking=no docker-compose.yml ec2-user@${APP_EC2_IP}:~/"
+
                         sh """
                             ssh -o StrictHostKeyChecking=no ec2-user@${APP_EC2_IP} << 'ENDSSH'
 
-                                docker stop novelcraft || true
-                                docker rm novelcraft || true
+                                # 인프라 실행 (Redis, Kafka, PostgreSQL 등)
+                                cd ~/
+                                sudo docker compose up -d
 
-                                docker pull ${DOCKER_IMAGE}:latest
+                                # sentinel 등 컨테이너 뜰 때까지 대기
+                                sleep 15
 
-                                docker run -d \\
+                                # 앱 컨테이너 교체
+                                sudo docker stop novelcraft || true
+                                sudo docker rm novelcraft || true
+
+                                sudo docker pull ${DOCKER_IMAGE}:latest
+
+                                sudo docker run -d \\
                                     --name novelcraft \\
                                     --network host \\
                                     -e SPRING_PROFILES_ACTIVE=prod \\
@@ -125,7 +124,7 @@ pipeline {
                                     --restart always \\
                                     ${DOCKER_IMAGE}:latest
 
-                                docker image prune -f
+                                sudo docker image prune -f
 ENDSSH
                         """
                     }
