@@ -76,7 +76,7 @@ pipeline {
 
                                 # 인프라 실행 (Redis, Kafka, PostgreSQL 등)
                                 cd ~/
-                                sudo docker compose up -d
+                                sudo docker-compose up -d
 
                                 # sentinel 등 컨테이너 뜰 때까지 대기
                                 sleep 15
