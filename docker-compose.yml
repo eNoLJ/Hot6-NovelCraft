@@ -59,8 +59,8 @@ services:
     command: >
       sh -c "echo 'port 26379' > /tmp/sentinel.conf &&
       echo 'protected-mode no' >> /tmp/sentinel.conf &&
-      echo 'sentinel announce-ip 127.0.0.1' >> /tmp/sentinel.conf &&
-      echo 'sentinel monitor mymaster 172.20.0.10 6379 2' >> /tmp/sentinel.conf &&
+      echo 'sentinel monitor mymaster redis-master 6379 2' >> /tmp/sentinel.conf &&
+      echo 'sentinel resolve-hostnames yes' >> /tmp/sentinel.conf &&
       redis-sentinel /tmp/sentinel.conf"
     depends_on:
       - redis-master
@@ -78,8 +78,8 @@ services:
     command: >
       sh -c "echo 'port 26380' > /tmp/sentinel.conf &&
       echo 'protected-mode no' >> /tmp/sentinel.conf &&
-      echo 'sentinel announce-ip 127.0.0.1' >> /tmp/sentinel.conf &&
-      echo 'sentinel monitor mymaster 172.20.0.10 6379 2' >> /tmp/sentinel.conf &&
+      echo 'sentinel monitor mymaster redis-master 6379 2' >> /tmp/sentinel.conf &&
+      echo 'sentinel resolve-hostnames yes' >> /tmp/sentinel.conf &&
       redis-sentinel /tmp/sentinel.conf"
     depends_on:
       - redis-master
@@ -97,8 +97,8 @@ services:
     command: >
       sh -c "echo 'port 26381' > /tmp/sentinel.conf &&
       echo 'protected-mode no' >> /tmp/sentinel.conf &&
-      echo 'sentinel announce-ip 127.0.0.1' >> /tmp/sentinel.conf &&
-      echo 'sentinel monitor mymaster 172.20.0.10 6379 2' >> /tmp/sentinel.conf &&
+      echo 'sentinel monitor mymaster redis-master 6379 2' >> /tmp/sentinel.conf &&
+      echo 'sentinel resolve-hostnames yes' >> /tmp/sentinel.conf &&
       redis-sentinel /tmp/sentinel.conf"
     depends_on:
       - redis-master
