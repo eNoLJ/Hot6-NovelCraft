@@ -68,26 +68,25 @@ pipeline {
                     string(credentialsId: 'redis-sentinel-nodes',  variable: 'REDIS_SENTINEL_NODES'),
                 ]) {
                     sshagent(['app-ec2-ssh-key']) {
-                        // docker-compose.yml EC2로 전송
-                        sh "scp -o StrictHostKeyChecking=no docker-compose.yml ec2-user@${APP_EC2_IP}:~/"
+                        sh "ssh -o StrictHostKeyChecking=no ec2-user@${APP_EC2_IP} 'mkdir -p ~/monitoring ~/init'"
 
                         sh """
+                            # 파일 전송
+                            scp -o StrictHostKeyChecking=no docker-compose.yml ec2-user@${APP_EC2_IP}:~/
+                            scp -o StrictHostKeyChecking=no -r monitoring ec2-user@${APP_EC2_IP}:~/
+                            scp -o StrictHostKeyChecking=no -r init ec2-user@${APP_EC2_IP}:~/
+
                             ssh -o StrictHostKeyChecking=no ec2-user@${APP_EC2_IP} << 'ENDSSH'
 
-                                # 인프라 실행 (Redis, Kafka, PostgreSQL 등)
-                                cd ~/
-                                sudo docker-compose up -d
+                                # 인프라 실행 (모니터링 제외)
+                                docker-compose up -d redis-master redis-sentinel-1 redis-sentinel-2 redis-sentinel-3 kafka-1 postgres-vector
 
-                                # sentinel 등 컨테이너 뜰 때까지 대기
-                                sleep 15
+                                docker stop novelcraft || true
+                                docker rm novelcraft || true
 
-                                # 앱 컨테이너 교체
-                                sudo docker stop novelcraft || true
-                                sudo docker rm novelcraft || true
+                                docker pull ${DOCKER_IMAGE}:latest
 
-                                sudo docker pull ${DOCKER_IMAGE}:latest
-
-                                sudo docker run -d \\
+                                docker run -d \\
                                     --name novelcraft \\
                                     --network host \\
                                     -e SPRING_PROFILES_ACTIVE=prod \\
@@ -124,7 +123,7 @@ pipeline {
                                     --restart always \\
                                     ${DOCKER_IMAGE}:latest
 
-                                sudo docker image prune -f
+                                docker image prune -f
 ENDSSH
                         """
                     }
